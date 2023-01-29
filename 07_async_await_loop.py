@@ -43,11 +43,6 @@ class Task:
         self.done = False
         self.result = None
 
-    def select(self):
-        now = time.time()
-        timeout = min((t - now for t in self.times), default=None)
-        return {key.fileobj for key, mask in selector.select(timeout)}
-
     def step(self, files, now):
         try:
             if self.done:
@@ -63,6 +58,19 @@ class Task:
 
     def close(self):
         self.gen.close()
+
+
+def run(coro):
+    task = Task(coro)
+    try:
+        while not task.done:
+            now = time.time()
+            timeout = min((t - now for t in task.times), default=None)
+            files = {key.fileobj for key, mask in selector.select(timeout)}
+            task.step(files, time.time())
+        return task.result
+    finally:
+        task.close()
 
 
 async def sleep(t):
@@ -89,26 +97,9 @@ async def gather(*coros):
             task.close()
 
 
-def run(coro):
-    task = Task(coro)
-    try:
-        while not task.done:
-            files = task.select()
-            task.step(files, time.time())
-        return task.result
-    finally:
-        task.close()
-
-
 def render():
     data[0] = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     print(' '.join(data))
-
-
-async def clock():
-    while True:
-        await sleep(10)
-        render()
 
 
 async def popen(cmd, i):
@@ -118,16 +109,21 @@ async def popen(cmd, i):
     try:
         while True:
             await AYield(({proc.stdout}, set()))
-            try:
-                reader.read_line()
-                data[i] = reader.line
-                render()
-            except ValueError:
-                break
+            reader.read_line()
+            data[i] = reader.line
+            render()
+    except ValueError:
+        pass
     finally:
         selector.unregister(proc.stdout)
         proc.terminate()
         proc.wait()
+
+
+async def clock():
+    while True:
+        await sleep(10)
+        render()
 
 
 async def amain():

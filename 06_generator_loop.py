@@ -34,11 +34,6 @@ class Task:
         self.done = False
         self.result = None
 
-    def select(self):
-        now = time.time()
-        timeout = min((t - now for t in self.times), default=None)
-        return {key.fileobj for key, mask in selector.select(timeout)}
-
     def step(self, files, now):
         try:
             if self.done:
@@ -54,6 +49,19 @@ class Task:
 
     def close(self):
         self.gen.close()
+
+
+def run(gen):
+    task = Task(gen)
+    try:
+        while not task.done:
+            now = time.time()
+            timeout = min((t - now for t in task.times), default=None)
+            files = {key.fileobj for key, mask in selector.select(timeout)}
+            task.step(files, time.time())
+        return task.result
+    finally:
+        task.close()
 
 
 def sleep(t):
@@ -80,26 +88,9 @@ def gather(*generators):
             task.close()
 
 
-def run(gen):
-    task = Task(gen)
-    try:
-        while not task.done:
-            files = task.select()
-            task.step(files, time.time())
-        return task.result
-    finally:
-        task.close()
-
-
 def render():
     data[0] = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     print(' '.join(data))
-
-
-def clock():
-    while True:
-        yield from sleep(10)
-        render()
 
 
 def popen(cmd, i):
@@ -109,16 +100,21 @@ def popen(cmd, i):
     try:
         while True:
             yield {proc.stdout}, set()
-            try:
-                reader.read_line()
-                data[i] = reader.line
-                render()
-            except ValueError:
-                break
+            reader.read_line()
+            data[i] = reader.line
+            render()
+    except ValueError:
+        pass
     finally:
         selector.unregister(proc.stdout)
         proc.terminate()
         proc.wait()
+
+
+def clock():
+    while True:
+        yield from sleep(10)
+        render()
 
 
 def amain():
