@@ -38,23 +38,28 @@ class Task:
     def __init__(self, coro):
         self.gen = coro.__await__()
         self.files = set()
-        self.times = {0}
-        self.init = False
+        self.times = {}
         self.done = False
         self.result = None
 
-    def step(self, files, now):
+    def set_result(self, result):
+        self.done = True
+        self.result = result
+
+    def init(self):
+        try:
+            self.files, self.times = next(self.gen)
+        except StopIteration as e:
+            self.set_result(e.value)
+
+    def wakeup(self, files, now):
         try:
             if self.done:
                 return
-            elif not self.init:
-                self.files, self.times = next(self.gen)
-                self.init = True
             elif any(t < now for t in self.times) or files & self.files:
                 self.files, self.times = self.gen.send((files, now))
         except StopIteration as e:
-            self.done = True
-            self.result = e.value
+            self.set_result(e.value)
 
     def close(self):
         self.gen.close()
@@ -63,11 +68,12 @@ class Task:
 def run(coro):
     task = Task(coro)
     try:
+        task.init()
         while not task.done:
             now = time.time()
             timeout = min((t - now for t in task.times), default=None)
             files = {key.fileobj for key, mask in selector.select(timeout)}
-            task.step(files, time.time())
+            task.wakeup(files, time.time())
         return task.result
     finally:
         task.close()
@@ -80,6 +86,8 @@ async def sleep(t):
 async def gather(*coros):
     subtasks = [Task(coro) for coro in coros]
     try:
+        for task in subtasks:
+            task.init()
         while True:
             wait_files = set().union(
                 *[t.files for t in subtasks if not t.done]
@@ -89,7 +97,7 @@ async def gather(*coros):
             )
             files, now = await AYield((wait_files, wait_times))
             for task in subtasks:
-                task.step(files, now)
+                task.wakeup(files, now)
             if all(task.done for task in subtasks):
                 return [task.result for task in subtasks]
     finally:
