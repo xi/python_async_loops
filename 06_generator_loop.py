@@ -29,7 +29,7 @@ class Task:
     def __init__(self, gen):
         self.gen = gen
         self.files = set()
-        self.times = {}
+        self.times = set()
         self.done = False
         self.result = None
 

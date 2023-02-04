@@ -38,7 +38,7 @@ class Task:
     def __init__(self, coro):
         self.gen = coro.__await__()
         self.files = set()
-        self.times = {}
+        self.times = set()
         self.done = False
         self.result = None
 
